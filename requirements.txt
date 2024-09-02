@@ -1,2 +1,8 @@
 flask
 gunicorn
+supabase
+python-dotenv
+flask_cors
+pandas
+plotly
+httpx[http2]
