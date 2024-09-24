@@ -35,74 +35,88 @@ last_day_of_last_month = first_day_of_this_month - timedelta(days=1)
 first_day_of_last_month = last_day_of_last_month.replace(day=1)
 
 first_day_of_last_month_iso = first_day_of_last_month.isoformat()
+one_week_ago = today - timedelta(weeks=1)
 
-response = supabase.table("appTemp") \
-    .select("*") \
-    .gte("createdAt", first_day_of_last_month_iso) \
-    .execute()
-data = response.data
+# Calculate the date 1 day ago
+one_day_ago = today - timedelta(days=1)
 
-df = pd.DataFrame(data)  
-df['createdAt'] = pd.to_datetime(df['createdAt'])
-
-df['coilTemp_k'] = pd.to_numeric(df['coilTemp'], errors='coerce') + 273.15
-df['surroundingTemp_k'] = pd.to_numeric(df['surroundingTemp'], errors='coerce') + 273.15
-
-# df['surroundingTemp'] = df['surroundingTemp'] + 273.15
-df['Relative_COP'] = df['coilTemp_k']/(df['surroundingTemp_k'] - df['coilTemp_k'])
+# Format the dates as ISO strings
+one_week_ago_iso = one_week_ago.isoformat()
+one_day_ago_iso = one_day_ago.isoformat()
 
 
 @app.route('/graph/week', methods=['POST'])
 def get_latest_week_data():
+    req_data = request.get_json()
+    iot_id = req_data.get('id')
+    response = supabase.table("appTemp") \
+    .select("*") \
+    .eq("iotID", iot_id) \
+    .gte("createdAt", one_week_ago_iso) \
+    .order("createdAt", desc=True) \
+    .execute()
+    data = response.data
+
+    df = pd.DataFrame(data)  
     df['createdAt'] = pd.to_datetime(df['createdAt'])
-    df['createdAt_naive'] = df['createdAt'].dt.tz_localize(None)
-    current_datetime = np.datetime64('today')
-    one_week_ago = current_datetime - np.timedelta64(7, 'D')
-    latest_week_data = df[df['createdAt_naive'] >= one_week_ago]
+
+    df['coilTemp_k'] = pd.to_numeric(df['coilTemp'], errors='coerce') + 273.15
+    df['surroundingTemp_k'] = pd.to_numeric(df['surroundingTemp'], errors='coerce') + 273.15
+    df['outsideTemp_k']=pd.to_numeric(df['outsideTemp'], errors='coerce') + 273.15
+    df['outsideCoilTemp_k']=pd.to_numeric(df['outsideCoilTemp'], errors='coerce') + 273.15
+    # df['Relative_COP'] = df['coilTemp_k']/(df['surroundingTemp_k'] - df['coilTemp_k'])
+    df['Relative_COP'] =( (df['coilTemp_k']-df['surroundingTemp_k'])+(df['outsideHumidity']-df['surroundingHumidity']))/((df['outsideCoilTemp_k']-df['outsideTemp_k'])+(df['coilTemp_k']-df['surroundingTemp_k']))
     fig1 = go.Figure()
-
-    # Add temperature trace
-    fig1.add_trace(go.Scatter(x=latest_week_data['createdAt'], y=latest_week_data['surroundingTemp'], mode='lines', name='Surrounding Temperature (°C)', yaxis='y1'))
-
-    # Add coil temperature trace with secondary y-axis
-    fig1.add_trace(go.Scatter(x=latest_week_data['createdAt'], y=latest_week_data['coilTemp'], mode='lines', name='Coil Temperature (°C)', yaxis='y2'))
-
-    # Add humidity trace with secondary y-axis
-    fig1.add_trace(go.Scatter(x=latest_week_data['createdAt'], y=latest_week_data['surroundingHumidity'], mode='lines', name='Surrounding Humidity (%)', yaxis='y2'))
-
-    # Update layout for dual y-axes
+    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideCoilTemp'], mode='lines', name='COndenser Coil Temperature (°C)', yaxis='y1'))
+    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Evaporator Coil Temperature (°C)', yaxis='y1'))
     fig1.update_layout(
         xaxis_title='Time',
-        yaxis_title='Surrounding Temperature (°C)',
-        yaxis2=dict(
-            title='Coil Temperature (°C) / Humidity (%)',
-            overlaying='y',
-            side='right'
-        ),
+        yaxis_title='Temperature (°C)',
         legend_title='Variables'
     )
-    
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=latest_week_data['createdAt'], y=latest_week_data['Relative_COP'], mode='lines', name='COP'))
+    fig2.add_trace(go.Scatter(x=df['createdAt'], y=df['Relative_COP'], mode='lines', name='COP'))
     fig2.update_layout(
         xaxis_title='Time',
         yaxis_title='COP',
         legend_title='Variables'
     )
     fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(x=latest_week_data['coilTemp'], y=latest_week_data['Relative_COP'], mode='lines', name='COP'))
+    fig3.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Evaporator Coil Temperature',yaxis='y1'))
+    fig3.add_trace(go.Scatter(x=df['createdAt'], y=df['surroundingTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
     fig3.update_layout(
         xaxis_title='Time',
-        yaxis_title='COP',
+        yaxis_title='Temperature (°C)',
         legend_title='Variables'
     )
+    fig4=go.Figure()
+    fig4.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideCoilTemp'], mode='lines', name='Condenser Coil Temperature',yaxis='y1'))
+    fig4.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
+    fig4.update_layout(
+        xaxis_title='Time',
+        yaxis_title='Temperature (°C)',
+        legend_title='Variables'
+    )
+    # fig5=go.Figure()
+    # fig5.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Condenser Coil Temperature',yaxis='y1'))
+    # fig5.add_trace(go.Scatter(x=df['createdAt'], y=df['surroundingTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
+    # fig5.update_layout(
+    #     xaxis_title='Time',
+    #     yaxis_title='Temperature (°C)',
+    #     legend_title='Variables'
+    # )
+
     graph_json1 = pio.to_json(fig1)
     graph_json2 = pio.to_json(fig2)
     graph_json3 = pio.to_json(fig3)
+    graph_json4 = pio.to_json(fig4)
+    # graph_json5=pio.to_json(fig5)
     combined_json = json.dumps({
-        'coilSurrHumi': graph_json1,
+        'coilDiff': graph_json1,
         'efficencyTime': graph_json2,
-        'efficencyTemp':graph_json3
+        'indoorTempDiff':graph_json3,
+        'outdoorTempDiff':graph_json4
+
     })
 
     buffer = io.BytesIO()
@@ -119,57 +133,94 @@ def get_latest_week_data():
 
 @app.route('/graph/day', methods=['POST'])
 def get_latest_day_data():
+    req_data = request.get_json()
+    iot_id = req_data.get('id')
+    response = supabase.table("appTemp") \
+        .select("*") \
+        .eq("iotID", iot_id) \
+        .gte("createdAt", one_day_ago_iso) \
+        .order("createdAt", desc=True) \
+        .execute()
+    
+    data = response.data
+
+    # Check if there's data
+    if not data:
+        # Return a response indicating no data or handle accordingly
+        empty_response = json.dumps({"message": "No data available"})
+        return Response(empty_response, content_type='application/json')
+
+    # Convert data to DataFrame
+    df = pd.DataFrame(data)  
+    
+    # Ensure 'createdAt' column exists before processing
+    if 'createdAt' not in df.columns:
+        return Response(json.dumps({"message": "'createdAt' column is missing in the data"}), content_type='application/json')
+
     df['createdAt'] = pd.to_datetime(df['createdAt'])
-    df['createdAt_naive'] = df['createdAt'].dt.tz_localize(None)
-    current_datetime = np.datetime64('today')
-    one_day_ago = current_datetime - np.timedelta64(1, 'D')
-    latest_day_data = df[df['createdAt_naive'] >= one_day_ago]
+
+    # Ensure columns exist before processing
+    if 'coilTemp' not in df.columns or 'surroundingTemp' not in df.columns:
+        return Response(json.dumps({"message": "Required columns are missing"}), content_type='application/json')
+
+    df['coilTemp_k'] = pd.to_numeric(df['coilTemp'], errors='coerce') + 273.15
+    df['surroundingTemp_k'] = pd.to_numeric(df['surroundingTemp'], errors='coerce') + 273.15
+    df['outsideTemp_k']=pd.to_numeric(df['outsideTemp'], errors='coerce') + 273.15
+    df['outsideCoilTemp_k']=pd.to_numeric(df['outsideCoilTemp'], errors='coerce') + 273.15
+    # df['Relative_COP'] = df['coilTemp_k']/(df['surroundingTemp_k'] - df['coilTemp_k'])
+    df['Relative_COP'] =( (df['coilTemp_k']-df['surroundingTemp_k'])+(df['outsideHumidity']-df['surroundingHumidity']))/((df['outsideCoilTemp_k']-df['outsideTemp_k'])+(df['coilTemp_k']-df['surroundingTemp_k']))
     fig1 = go.Figure()
-
-    # Add temperature trace
-    fig1.add_trace(go.Scatter(x=latest_day_data['createdAt'], y=latest_day_data['surroundingTemp'], mode='lines', name='Surrounding Temperature (°C)', yaxis='y1'))
-
-    # Add coil temperature trace with secondary y-axis
-    fig1.add_trace(go.Scatter(x=latest_day_data['createdAt'], y=latest_day_data['coilTemp'], mode='lines', name='Coil Temperature (°C)', yaxis='y2'))
-
-    # Add humidity trace with secondary y-axis
-    fig1.add_trace(go.Scatter(x=latest_day_data['createdAt'], y=latest_day_data['surroundingHumidity'], mode='lines', name='Surrounding Humidity (%)', yaxis='y2'))
-
-    # Update layout for dual y-axes
+    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideCoilTemp'], mode='lines', name='COndenser Coil Temperature (°C)', yaxis='y1'))
+    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Evaporator Coil Temperature (°C)', yaxis='y1'))
     fig1.update_layout(
         xaxis_title='Time',
-        yaxis_title='Surrounding Temperature (°C)',
-        yaxis2=dict(
-            title='Coil Temperature (°C) / Humidity (%)',
-            overlaying='y',
-            side='right'
-        ),
+        yaxis_title='Temperature (°C)',
         legend_title='Variables'
     )
-    
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=latest_day_data['createdAt'], y=latest_day_data['Relative_COP'], mode='lines', name='COP'))
+    fig2.add_trace(go.Scatter(x=df['createdAt'], y=df['Relative_COP'], mode='lines', name='COP'))
     fig2.update_layout(
         xaxis_title='Time',
         yaxis_title='COP',
         legend_title='Variables'
     )
     fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(x=latest_day_data['coilTemp'], y=latest_day_data['Relative_COP'], mode='lines', name='COP'))
+    fig3.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Evaporator Coil Temperature',yaxis='y1'))
+    fig3.add_trace(go.Scatter(x=df['createdAt'], y=df['surroundingTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
     fig3.update_layout(
         xaxis_title='Time',
-        yaxis_title='COP',
+        yaxis_title='Temperature (°C)',
         legend_title='Variables'
     )
+    fig4=go.Figure()
+    fig4.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideCoilTemp'], mode='lines', name='Condenser Coil Temperature',yaxis='y1'))
+    fig4.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
+    fig4.update_layout(
+        xaxis_title='Time',
+        yaxis_title='Temperature (°C)',
+        legend_title='Variables'
+    )
+    # fig5=go.Figure()
+    # fig5.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Condenser Coil Temperature',yaxis='y1'))
+    # fig5.add_trace(go.Scatter(x=df['createdAt'], y=df['surroundingTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
+    # fig5.update_layout(
+    #     xaxis_title='Time',
+    #     yaxis_title='Temperature (°C)',
+    #     legend_title='Variables'
+    # )
+
     graph_json1 = pio.to_json(fig1)
     graph_json2 = pio.to_json(fig2)
     graph_json3 = pio.to_json(fig3)
+    graph_json4 = pio.to_json(fig4)
+    # graph_json5=pio.to_json(fig5)
     combined_json = json.dumps({
-        'coilSurrHumi': graph_json1,
+        'coilDiff': graph_json1,
         'efficencyTime': graph_json2,
-        'efficencyTemp':graph_json3
-    })
+        'indoorTempDiff':graph_json3,
+        'outdoorTempDiff':graph_json4
 
+    })
     buffer = io.BytesIO()
     with gzip.GzipFile(fileobj=buffer, mode='wb') as file:
         file.write(combined_json.encode('utf-8'))
@@ -184,30 +235,34 @@ def get_latest_day_data():
 
 @app.route('/graph/month', methods=['POST'])
 def get_graph():
-    # Create first figure
+    req_data = request.get_json()
+    iot_id = req_data.get('id')
+    response = supabase.table("appTemp") \
+    .select("*") \
+    .eq("iotID", iot_id) \
+    .gte("createdAt", first_day_of_last_month_iso) \
+    .order("createdAt", desc=True) \
+    .execute()
+    data = response.data
+
+    df = pd.DataFrame(data)  
+    df['createdAt'] = pd.to_datetime(df['createdAt'])
+
+    
+    df['coilTemp_k'] = pd.to_numeric(df['coilTemp'], errors='coerce') + 273.15
+    df['surroundingTemp_k'] = pd.to_numeric(df['surroundingTemp'], errors='coerce') + 273.15
+    df['outsideTemp_k']=pd.to_numeric(df['outsideTemp'], errors='coerce') + 273.15
+    df['outsideCoilTemp_k']=pd.to_numeric(df['outsideCoilTemp'], errors='coerce') + 273.15
+    # df['Relative_COP'] = df['coilTemp_k']/(df['surroundingTemp_k'] - df['coilTemp_k'])
+    df['Relative_COP'] =( (df['coilTemp_k']-df['surroundingTemp_k'])+(df['outsideHumidity']-df['surroundingHumidity']))/((df['outsideCoilTemp_k']-df['outsideTemp_k'])+(df['coilTemp_k']-df['surroundingTemp_k']))
     fig1 = go.Figure()
-
-    # Add temperature trace
-    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['surroundingTemp'], mode='lines', name='Surrounding Temperature (°C)', yaxis='y1'))
-
-    # Add coil temperature trace with secondary y-axis
-    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Coil Temperature (°C)', yaxis='y2'))
-
-    # Add humidity trace with secondary y-axis
-    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['surroundingHumidity'], mode='lines', name='Surrounding Humidity (%)', yaxis='y2'))
-
-    # Update layout for dual y-axes
+    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideCoilTemp'], mode='lines', name='COndenser Coil Temperature (°C)', yaxis='y1'))
+    fig1.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Evaporator Coil Temperature (°C)', yaxis='y1'))
     fig1.update_layout(
         xaxis_title='Time',
-        yaxis_title='Surrounding Temperature (°C)',
-        yaxis2=dict(
-            title='Coil Temperature (°C) / Humidity (%)',
-            overlaying='y',
-            side='right'
-        ),
+        yaxis_title='Temperature (°C)',
         legend_title='Variables'
     )
-    
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(x=df['createdAt'], y=df['Relative_COP'], mode='lines', name='COP'))
     fig2.update_layout(
@@ -216,19 +271,41 @@ def get_graph():
         legend_title='Variables'
     )
     fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(x=df['coilTemp'], y=df['Relative_COP'], mode='lines', name='COP'))
+    fig3.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Evaporator Coil Temperature',yaxis='y1'))
+    fig3.add_trace(go.Scatter(x=df['createdAt'], y=df['surroundingTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
     fig3.update_layout(
         xaxis_title='Time',
-        yaxis_title='COP',
+        yaxis_title='Temperature (°C)',
         legend_title='Variables'
     )
+    fig4=go.Figure()
+    fig4.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideCoilTemp'], mode='lines', name='Condenser Coil Temperature',yaxis='y1'))
+    fig4.add_trace(go.Scatter(x=df['createdAt'], y=df['outsideTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
+    fig4.update_layout(
+        xaxis_title='Time',
+        yaxis_title='Temperature (°C)',
+        legend_title='Variables'
+    )
+    # fig5=go.Figure()
+    # fig5.add_trace(go.Scatter(x=df['createdAt'], y=df['coilTemp'], mode='lines', name='Condenser Coil Temperature',yaxis='y1'))
+    # fig5.add_trace(go.Scatter(x=df['createdAt'], y=df['surroundingTemp'], mode='lines', name='Surrounding Temperature',yaxis='y1'))
+    # fig5.update_layout(
+    #     xaxis_title='Time',
+    #     yaxis_title='Temperature (°C)',
+    #     legend_title='Variables'
+    # )
+
     graph_json1 = pio.to_json(fig1)
     graph_json2 = pio.to_json(fig2)
     graph_json3 = pio.to_json(fig3)
+    graph_json4 = pio.to_json(fig4)
+    # graph_json5=pio.to_json(fig5)
     combined_json = json.dumps({
-        'coilSurrHumi': graph_json1,
+        'coilDiff': graph_json1,
         'efficencyTime': graph_json2,
-        'efficencyTemp':graph_json3
+        'indoorTempDiff':graph_json3,
+        'outdoorTempDiff':graph_json4
+
     })
 
     buffer = io.BytesIO()
@@ -243,12 +320,69 @@ def get_graph():
 
     return response
 
-# @app.route("/dashboard",methods=['POST'])
-# def dashboard():
+@app.route("/dashboard",methods=['POST'])
+def dashboard():
+    req_data = request.get_json()
+    iot_id = req_data.get('id')
+    response = supabase.table("appTemp") \
+    .select("*") \
+    .eq("iotID", iot_id) \
+    .gte("createdAt", first_day_of_last_month_iso) \
+    .order("createdAt", desc=True) \
+    .execute()
+    data = response.data
+
+    df = pd.DataFrame(data)  
+    df['createdAt'] = pd.to_datetime(df['createdAt'])
+
+    df['coilTemp_k'] = pd.to_numeric(df['coilTemp'], errors='coerce') + 273.15
+    df['surroundingTemp_k'] = pd.to_numeric(df['surroundingTemp'], errors='coerce') + 273.15
+    df['outsideTemp_k']=pd.to_numeric(df['outsideTemp'], errors='coerce') + 273.15
+    df['outsideCoilTemp_k']=pd.to_numeric(df['outsideCoilTemp'], errors='coerce') + 273.15
+    # df['Relative_COP'] = df['coilTemp_k']/(df['surroundingTemp_k'] - df['coilTemp_k'])
+    df['Relative_COP'] =( (df['coilTemp_k']-df['surroundingTemp_k'])+(df['outsideHumidity']-df['surroundingHumidity']))/((df['outsideCoilTemp_k']-df['outsideTemp_k'])+(df['coilTemp_k']-df['surroundingTemp_k']))
+    
+    # df['createdAt'] = pd.to_datetime(df['createdAt'])
+    df.set_index('createdAt', inplace=True)
+    weekly_avg_cop = df.resample('W')['Relative_COP'].mean()
+    weekly_avg_cop = weekly_avg_cop.fillna(0)
+    weekly_avg_cop_dict = {date.isoformat(): avg for date, avg in weekly_avg_cop.items()}
+    
+    first_row = df.head(1).to_dict(orient='records')[0] if not df.empty else {}
+    monthly_avg_cop = df['Relative_COP'].mean()
+    # Prepare JSON response
+    response_data = {
+        "week": weekly_avg_cop_dict,
+        # "surroundingTemp": first_row_surrounding_temp,
+        "monthlyAvgCOP": monthly_avg_cop,
+        "latest_entry":first_row
+    }
+
+    return jsonify(response_data)
 
 
 @app.route('/categories', methods=['POST'])
 def categorize_cop():
+    req_data = request.get_json()
+    iot_id = req_data.get('id')
+    response = supabase.table("appTemp") \
+    .select("*") \
+    .eq("iotID", iot_id) \
+    .gte("createdAt", first_day_of_last_month_iso) \
+    .order("createdAt", desc=True) \
+    .execute()
+    data = response.data
+
+    df = pd.DataFrame(data)  
+    df['createdAt'] = pd.to_datetime(df['createdAt'])
+
+    df['coilTemp_k'] = pd.to_numeric(df['coilTemp'], errors='coerce') + 273.15
+    df['surroundingTemp_k'] = pd.to_numeric(df['surroundingTemp'], errors='coerce') + 273.15
+
+# df['surroundingTemp'] = df['surroundingTemp'] + 273.15
+    # df['Relative_COP'] = df['coilTemp_k']/(df['surroundingTemp_k'] - df['coilTemp_k'])
+    df['Relative_COP'] =( (df['coilTemp_k']-df['surroundingTemp_k'])+(df['outsideHumidity']-df['surroundingHumidity']))/((df['outsideCoilTemp_k']-df['outsideTemp_k'])+(df['coilTemp_k']-df['surroundingTemp_k']))
+    
     data = request.json
     
     # Access data fields
@@ -261,11 +395,7 @@ def categorize_cop():
 
     min_value = df['Relative_COP'].min()
     max_value = df['Relative_COP'].max()
-    df['createdAt'] = pd.to_datetime(df['createdAt'])
-    df.set_index('createdAt', inplace=True)
-    weekly_avg_cop = df.resample('W')['Relative_COP'].mean()
-    weekly_avg_cop_dict = {date.isoformat(): avg for date, avg in weekly_avg_cop.items()}
-
+    
     row_count = df.shape[0]
     supabase.table("efficiencyPoint").insert({
         "iotID": iot_id,
@@ -284,7 +414,7 @@ def categorize_cop():
         "q80": q80,
         "max_value": max_value,
         "row_count": row_count,
-        "week":weekly_avg_cop_dict
+        
     })
 
 if __name__ == '__main__':
